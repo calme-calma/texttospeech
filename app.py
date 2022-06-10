@@ -1,90 +1,87 @@
-import pandas as pd
-import yfinance as yf
-import altair as alt
+import os
+#texttospeechを読み込む
+from google.cloud import texttospeech
+
 import streamlit as st
 
-st.title('米国株価可視化アプリ')
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'secret.json'
 
-st.sidebar.write("""
-# 米国株価
-こちらは株価可視化ツールです。以下のオプションから表示日数を指定できます。
-""")
-
-st.sidebar.write("""
-## 表示日数選択
-""")
-
-days = st.sidebar.slider('日数', 1, 50, 20)
-
-st.write(f"""
-### 過去 **{days}日間**の米国株価
-""")
-
-@st.cache
-def get_data(days, tickers):
-    df = pd.DataFrame()
-    for company in tickers.keys():
-        tkr = yf.Ticker(tickers[company])
-        hist = tkr.history(period=f'{days}d')
-        hist.index = hist.index.strftime('%d %B %Y')
-        hist = hist[['Close']]
-        hist.columns = [company]
-        hist = hist.T
-        hist.index.name = 'Name'
-
-        #histをdfに追加していく
-        df = pd.concat([df, hist])
-    return df
-
-try:
-    st.sidebar.write("""
-    ## 株価の範囲指定
-    """)
-    ymin, ymax = st.sidebar.slider(
-        '範囲を指定してください。',
-        0.0, 3500.0, (0.0, 120.0)
-    )
-
-    tickers = {
-        'apple': 'AAPL',
-        'meta': 'FB',
-        'google': 'GOOGL',
-        'microsoft': 'MSFT',
-        'netflix': 'NFLX',
-        'amazon': 'AMZN',
-        'SPYD': 'SPYD',
-        'HDV': 'HDV',
-        'OTLY': 'OTLY',
-        'BYND': 'BYND'
+def synthesis_speech(text, lang='日本語', gender='default'):
+    gender_type = {
+        'default': texttospeech.SsmlVoiceGender.SSML_VOICE_GENDER_UNSPECIFIED,
+        'male': texttospeech.SsmlVoiceGender.MALE,
+        'female': texttospeech.SsmlVoiceGender.FEMALE,
+        'neutral': texttospeech.SsmlVoiceGender.NEUTRAL
+    }
+    lang_code = {
+        '英語': 'en-US',
+        '日本語': 'ja-JP'
     }
 
-    df = get_data(days, tickers)
-    companies = st.multiselect(
-        '会社名を選択してください。',
-        list(df.index),
-        ['SPYD', 'HDV', 'OTLY', 'BYND']
+    #APIのインスタンス化を行う。（APIを使えるようにしている。）
+    #秘密鍵の情報もここで取得している。（認証情報の取得）
+    client = texttospeech.TextToSpeechClient()
+
+    #音声ファイルを生成するためのテキストを用意している。
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    #音声を生成するためのパラメータを設定している。
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=lang_code[lang], ssml_gender=gender_type[gender]
     )
 
-    if not companies:
-        st.error('少なくとも一社は選んでください。')
-    else:
-        data = df.loc[companies]
-        st.write("### 株価(USD)", data.sort_index())
-        data = data.T.reset_index()
-        data = pd.melt(data, id_vars=['Date']).rename(
-        columns={'value': 'Stock Prices(USD)'}
-        )
-        chart = (
-            alt.Chart(data)
-            .mark_line(opacity=0.8, clip=True)
-            .encode(
-                x="Date:T",
-                y=alt.Y("Stock Prices(USD):Q", stack=None, scale=alt.Scale(domain=[ymin, ymax])),
-                color='Name:N'
-            )
-        )
-        st.altair_chart(chart, use_container_width=True)
-except:
-    st.error(
-        "おっと！なにかエラーが起きているようです。"
+    #生成する音声の設定をしている。
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
     )
+
+    #上記3つのパラメータをsynthesize_speechの引数に入れてAPIをたたき、その結果をresponseに入れている。
+    response = client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
+    return response
+
+st.title('音声出力アプリ')
+
+st.markdown('### データ準備')
+
+input_option = st.selectbox(
+    '入力データの選択',
+    ('直接入力', 'テキストファイル')
+)
+
+input_data = None
+
+if input_option == '直接入力':
+    input_data = st.text_area('こちらにテキストを入力してください', 'Cloud Speech-to-Text用のサンプル文になります。')
+else:
+    uploaded_file = st.file_uploader('テキストファイルをアップロードしてください',['txt'])
+    if uploaded_file is not None:
+        content = uploaded_file.read()
+        input_data = content.decode()
+
+
+if input_data is not None:
+    st.write('入力データ')
+    st.write(input_data)
+    st.markdown('### パラメータ設定')
+    st.markdown('#### 言語と話者の性別選択')
+    
+    lang = st.selectbox(
+        '言語を選択してください。',
+        ('日本語', '英語')
+    )
+
+    gender = st.selectbox(
+        '話者の性別を選択してください。',
+        ('default', 'male', 'female', 'neutral')
+    )
+    
+    st.markdown('### 音声合成')
+    st.write('こちらの文章で音声ファイルの生成を行いますか？')
+    if st.button('開始'):
+        comment = st.empty()
+        comment.write('音声出力を開始します。')
+        response = synthesis_speech(input_data, lang=lang, gender=gender)
+        st.audio(response.audio_content)
+        comment.write('完了しました')
