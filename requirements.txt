@@ -1,1 +1,2 @@
 streamlit==1.1.0
+google-cloud-texttospeech==2.11.0
